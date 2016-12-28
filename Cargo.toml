@@ -1,0 +1,6 @@
+[package]
+name = "ripelines"
+version = "0.1.0"
+authors = ["benhirsch24 <hirschb@lab126.com>"]
+
+[dependencies]
