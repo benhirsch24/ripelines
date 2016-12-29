@@ -1,24 +1,36 @@
 use std::collections::HashMap;
 use std::rc::{Rc};
 use std::cell::{RefCell, RefMut};
-use std::borrow::BorrowMut;
 
 pub struct Buffer {
     size: usize,
     data: Vec<u8>
 }
 
+#[derive(Copy, Clone)]
+pub struct EdgeIdx {
+    pub idx: usize
+}
+
 pub struct Edge {
     name: String,
-    buffers: Vec<Buffer>
+    buffers: Vec<Buffer>,
+    source: NodeIdx,
+    sink: NodeIdx
 }
 
 impl Edge {
-    pub fn new(name: &str) -> Edge {
+    pub fn new(name: &str, src: NodeIdx, sink: NodeIdx) -> Edge {
         Edge {
             name: name.to_string(),
-            buffers: vec!()
+            buffers: vec!(),
+            source: src,
+            sink: sink
         }
+    }
+
+    pub fn get_name(&self) -> &str {
+        &self.name
     }
 
     pub fn push_buffer(&mut self, buffer: Buffer) -> Result<(), String> {
@@ -35,18 +47,23 @@ impl Edge {
     }
 }
 
+pub enum FilterState {
+    CREATED,
+    INITIALIZED,
+    PAUSED,
+    PLAYING
+}
+
 pub struct Element {
     pub name: String,
-    pub incoming_edges: HashMap<String, RefCell<Edge>>,
-    pub outgoing_edges: HashMap<String, RefCell<Edge>>
+    pub state: FilterState
 }
 
 impl Element {
     pub fn new(name: &str) -> Element {
         Element {
             name: name.to_string(),
-            incoming_edges: HashMap::new(),
-            outgoing_edges: HashMap::new()
+            state: FilterState::CREATED
         }
     }
 
@@ -60,42 +77,129 @@ pub enum EdgeType {
 }
 
 pub trait Filter {
-    fn get_element(&mut self) -> &mut Element;
+    fn get_element(&self) -> &Element;
+    fn get_mut_element(&mut self) -> &mut Element;
 
-    fn request_new_edge(&self, filter_type: EdgeType) -> Result<RefCell<Edge>, String>;
-
-    fn connect(&mut self, other: &mut Filter) -> Result<(), String> {
-        let my_edge = self.request_new_edge(EdgeType::OUTGOING)?;
-        let other_edge = other.request_new_edge(EdgeType::INCOMING)?;
-
-        let mut other_element = other.get_element();
-        let mut my_element = self.get_element();
-
-        my_element.outgoing_edges.insert(other_element.name.clone(), my_edge);
-        other_element.incoming_edges.insert(my_element.name.clone(), other_edge);
-
-        Ok(())
-    }
+    fn set_filter_state(&mut self, state: FilterState);
 
     fn run(&mut self);
 }
 
+#[derive(Copy, Clone)]
+pub struct NodeIdx {
+    pub idx: usize
+}
+
+pub struct Node {
+    name: String,
+    filter: Rc<RefCell<Filter>>,
+    pub incoming_edges: Vec<EdgeIdx>,
+    pub outgoing_edges: Vec<EdgeIdx>
+}
+
+impl Node {
+    pub fn new(filter: Rc<RefCell<Filter>>) -> Node {
+        let name = filter.borrow().get_element().name.clone();
+        Node {
+            name: name,
+            filter: filter,
+            incoming_edges: vec!(),
+            outgoing_edges: vec!()
+        }
+    }
+
+    pub fn get_filter(&self) -> Rc<RefCell<Filter>> {
+        self.filter.clone()
+    }
+
+    pub fn get_name(&self) -> &str {
+        &self.name
+    }
+}
+
 pub struct Pipeline {
     running: bool,
-    filters: Vec<Rc<RefCell<Filter>>>
+    nodes: Vec<Node>,
+    edges: Vec<Rc<RefCell<Edge>>>
 }
 
 impl Pipeline {
     pub fn new() -> Pipeline {
-        Pipeline {running: false, filters: vec!()}
+        Pipeline { running: false, nodes: vec!(), edges: vec!() }
     }
 
-    pub fn add(&mut self, f: Rc<RefCell<Filter>>) {
-        self.filters.push(f);
+    pub fn add(&mut self, f: Rc<RefCell<Filter>>) -> Result<NodeIdx, String> {
+        let node = Node::new(f);
+        let idx = self.nodes.len();
+        self.nodes.push(node);
+
+        Ok(NodeIdx{ idx: idx })
+    }
+
+    pub fn get_node(&self, idx: NodeIdx) -> &Node {
+        &self.nodes[idx.idx]
+    }
+
+    pub fn get_node_mut(&mut self, idx: NodeIdx) -> &mut Node {
+        &mut self.nodes[idx.idx]
+    }
+
+    pub fn connect(&mut self, src: NodeIdx, sink: NodeIdx) -> Result<EdgeIdx, String> {
+        // form a name so we can debug and stuff
+        let edge_name = {
+            let nodeA = self.get_node(src);
+            let nodeA_name = nodeA.get_name();
+            let nodeB = self.get_node(sink);
+            let nodeB_name = nodeB.get_name();
+
+            format!("{}-{}", nodeA_name, nodeB_name)
+        };
+
+        // give the edge idx to the nodes themselves
+        let idx = self.edges.len();
+        let edge_idx = EdgeIdx{ idx: idx };
+
+        // push the edge on
+        let edge = Rc::new(RefCell::new(Edge::new(&edge_name, src, sink)));
+        self.edges.push(edge);
+
+        {
+            let mut nodeA = self.get_node_mut(src);
+            nodeA.outgoing_edges.push(edge_idx);
+        }
+
+        {
+            let mut nodeB = self.get_node_mut(sink);
+            nodeB.incoming_edges.push(edge_idx);
+        }
+
+        Ok(edge_idx)
     }
 
     pub fn make_schedule(&mut self) -> Vec<usize> {
-        vec!()
+        let mut nodes: Vec<usize> = (0..self.nodes.len()).collect();
+        let mut top_of_tree = vec!();
+
+        for (idx, node) in self.nodes.iter().enumerate() {
+            println!("{}", node.get_name());
+
+            if node.incoming_edges.is_empty() {
+                nodes.remove(idx);
+                top_of_tree.push(idx);
+            }
+        }
+
+        for node_idx in top_of_tree {
+            let node = &self.nodes[node_idx];
+            println!("Top of tree: {}", node.get_name());
+            println!("Outgoing edges:");
+            for edge_idx in &node.outgoing_edges {
+                let edge = &self.edges[edge_idx.idx];
+                println!("   {}", edge.borrow().get_name());
+            }
+        }
+
+        nodes
     }
 
     pub fn run(&mut self) {
@@ -105,7 +209,5 @@ impl Pipeline {
         }
 
         let schedule = self.make_schedule();
-        println!("{}", schedule.len());
     }
 }
-

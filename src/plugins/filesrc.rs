@@ -1,22 +1,26 @@
 use base::*;
-use std::cell::{RefCell, RefMut};
+use std::fs::File;
+use std::rc::Rc;
+use std::cell::{RefCell, Cell};
 
 const DEF_CHUNK_SIZE: usize = 1024 * 1024;
 
 pub struct Filesrc {
     base: Element,
 
+    fd: Option<File>,
     location: String,
     chunk_size: usize,
 }
 
 impl Filesrc {
-    pub fn new(loc: &str) -> Filesrc {
-        Filesrc{
+    pub fn new(loc: &str) -> Rc<RefCell<Filesrc>> {
+        Rc::new(RefCell::new(Filesrc {
             base: Element::new("filesrc"),
+            fd: None,
             location: loc.to_string(),
             chunk_size: DEF_CHUNK_SIZE
-        }
+        }))
     }
 
     pub fn set_chunk_size(&mut self, cs: usize) { self.chunk_size = cs; }
@@ -24,29 +28,28 @@ impl Filesrc {
 }
 
 impl Filter for Filesrc {
-    fn get_element(&mut self) -> &mut Element { &mut self.base }
+    fn get_element(&self) -> &Element { &self.base }
+    fn get_mut_element(&mut self) -> &mut Element { &mut self.base }
 
-    fn request_new_edge(&self, filter_type: EdgeType) -> Result<RefCell<Edge>, String> {
-        let edge;
-
-        match filter_type {
-            EdgeType::INCOMING => {
-                if self.base.incoming_edges.len() == 0 {
-                    edge = RefCell::new(Edge::new(&format!("{}-incoming", self.base.name)))
-                } else {
-                    return Err(format!("Incoming edge already exists for {}", self.base.name))
+    fn set_filter_state(&mut self, state: FilterState) {
+        match state {
+            FilterState::CREATED => {
+                println!("Filesrc is created");
+            },
+            FilterState::INITIALIZED => {
+                let fd = File::open(&self.location);
+                match fd {
+                    Ok(f) => self.fd = Some(f),
+                    Err(e) => println!("{}", e)
                 }
             },
-            EdgeType::OUTGOING => {
-                if self.base.outgoing_edges.len() == 0 {
-                    edge = RefCell::new(Edge::new(&format!("{}-outgoing", self.base.name)))
-                } else {
-                    return Err(format!("Outgoing edge already exists for {}", self.base.name))
-                }
+            FilterState::PAUSED => {
+                println!("Filesrc now paused");
+            },
+            FilterState::PLAYING => {
+                println!("Filesrc now playing");
             }
         }
-
-        Ok(edge)
     }
 
     fn run(&mut self) {

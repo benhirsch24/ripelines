@@ -1,42 +1,38 @@
 use base::*;
-use std::cell::{RefCell, RefMut};
+use std::rc::Rc;
+use std::cell::{RefCell};
 
 pub struct Print {
     base: Element
 }
 
 impl Print {
-    pub fn new() -> Print {
-        Print {
+    pub fn new() -> Rc<RefCell<Print>> {
+        Rc::new(RefCell::new(Print {
             base: Element::new("print")
-        }
+        }))
     }
 }
 
 impl Filter for Print {
-    fn get_element(&mut self) -> &mut Element { &mut self.base }
+    fn get_element(&self) -> &Element { &self.base }
+    fn get_mut_element(&mut self) -> &mut Element { &mut self.base }
 
-    fn request_new_edge(&self, filter_type: EdgeType) -> Result<RefCell<Edge>, String> {
-        let edge;
-
-        match filter_type {
-            EdgeType::INCOMING => {
-                if self.base.incoming_edges.len() == 0 {
-                    edge = RefCell::new(Edge::new(&format!("{}-incoming", self.base.name)))
-                } else {
-                    return Err(format!("Incoming edge already exists for {}", self.base.name))
-                }
+    fn set_filter_state(&mut self, state: FilterState) {
+        match state {
+            FilterState::CREATED => {
+                println!("Print is created");
             },
-            EdgeType::OUTGOING => {
-                if self.base.outgoing_edges.len() == 0 {
-                    edge = RefCell::new(Edge::new(&format!("{}-outgoing", self.base.name)))
-                } else {
-                    return Err(format!("Outgoing edge already exists for {}", self.base.name))
-                }
+            FilterState::INITIALIZED => {
+                println!("Print now initialized");
+            },
+            FilterState::PAUSED => {
+                println!("Print now paused");
+            },
+            FilterState::PLAYING => {
+                println!("Print now playing");
             }
         }
-
-        Ok(edge)
     }
 
     fn run(&mut self) {
