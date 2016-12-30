@@ -1,6 +1,4 @@
 extern crate ripelines;
-use std::rc::Rc;
-use std::cell::{RefCell, RefMut};
 use ripelines::base::*;
 use ripelines::plugins::filesrc::*;
 use ripelines::plugins::print::*;
@@ -30,5 +28,7 @@ fn main() {
         Err(s) => { println!("Error connecting filesrc to print: {}", s); return; }
     };
 
-    pipeline.run();
+    if !pipeline.run() {
+        println!("Failed to run pipeline :(");
+    }
 }

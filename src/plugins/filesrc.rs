@@ -1,5 +1,7 @@
 use base::*;
 use std::fs::File;
+use std::io;
+use std::io::prelude::*;
 use std::rc::Rc;
 use std::cell::{RefCell, Cell};
 
@@ -53,6 +55,15 @@ impl Filter for Filesrc {
     }
 
     fn run(&mut self) {
+        let mut v = Vec::with_capacity(self.chunk_size);
+        let buf = &mut v;
+        let fd = match self.fd.as_mut() {
+            Some(f) => f,
+            None => { panic!("Running filesrc but WE HAVEN'T OPENED A FILE!!!"); }
+        };
+
+        fd.read_exact(buf);
+
         print!("Filesrc ran");
     }
 }

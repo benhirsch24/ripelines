@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::LinkedList;
 use std::rc::{Rc};
 use std::cell::{RefCell, RefMut};
 
@@ -85,7 +86,7 @@ pub trait Filter {
     fn run(&mut self);
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct NodeIdx {
     pub idx: usize
 }
@@ -147,12 +148,12 @@ impl Pipeline {
     pub fn connect(&mut self, src: NodeIdx, sink: NodeIdx) -> Result<EdgeIdx, String> {
         // form a name so we can debug and stuff
         let edge_name = {
-            let nodeA = self.get_node(src);
-            let nodeA_name = nodeA.get_name();
-            let nodeB = self.get_node(sink);
-            let nodeB_name = nodeB.get_name();
+            let node_a = self.get_node(src);
+            let node_a_name = node_a.get_name();
+            let node_b = self.get_node(sink);
+            let node_b_name = node_b.get_name();
 
-            format!("{}-{}", nodeA_name, nodeB_name)
+            format!("{}-{}", node_a_name, node_b_name)
         };
 
         // give the edge idx to the nodes themselves
@@ -164,50 +165,105 @@ impl Pipeline {
         self.edges.push(edge);
 
         {
-            let mut nodeA = self.get_node_mut(src);
-            nodeA.outgoing_edges.push(edge_idx);
+            let mut node_a = self.get_node_mut(src);
+            node_a.outgoing_edges.push(edge_idx);
         }
 
         {
-            let mut nodeB = self.get_node_mut(sink);
-            nodeB.incoming_edges.push(edge_idx);
+            let mut node_b = self.get_node_mut(sink);
+            node_b.incoming_edges.push(edge_idx);
         }
 
         Ok(edge_idx)
     }
 
-    pub fn make_schedule(&mut self) -> Vec<usize> {
-        let mut nodes: Vec<usize> = (0..self.nodes.len()).collect();
-        let mut top_of_tree = vec!();
+    pub fn make_schedule(&mut self) -> Vec<NodeIdx> {
+        let mut visited_nodes = HashMap::new();
+        for i in 0..self.nodes.len() {
+            visited_nodes.insert(NodeIdx{idx: i}, false);
+        }
 
+        let mut node_list: LinkedList<NodeIdx> = LinkedList::new();
+        let mut node_sched: Vec<NodeIdx> = vec!();
+
+        // get the nodes at the top of the tree ie who don't have incoming edges
         for (idx, node) in self.nodes.iter().enumerate() {
             println!("{}", node.get_name());
 
             if node.incoming_edges.is_empty() {
-                nodes.remove(idx);
-                top_of_tree.push(idx);
+                node_list.push_back(NodeIdx{idx:idx});
+                visited_nodes.insert(NodeIdx{idx:idx}, true);
             }
         }
 
-        for node_idx in top_of_tree {
-            let node = &self.nodes[node_idx];
-            println!("Top of tree: {}", node.get_name());
+        // visit each node
+        while !node_list.is_empty() {
+            let node_idx = match node_list.pop_front() {
+                Some(n) => n,
+                None => break
+            };
+            let node = self.get_node(node_idx);
+
+            // if each incoming edge has been visited, add this idx to the schedule
+            println!("Visiting {}", node.get_name());
+            let mut colored = true;
+            for edge_idx in &node.incoming_edges {
+                let edge = &self.edges[edge_idx.idx];
+                match visited_nodes.get(&edge.borrow().source) {
+                    Some(c) => {
+                        if !c {
+                            colored = false;
+                        }
+                    },
+                    None => {}
+                }
+            }
+
+            if colored {
+                println!("this node has been colored!!! {:?}", node_idx);
+                node_sched.push(node_idx);
+            }
+
+            // add each node from the outgoing edges to the list
             println!("Outgoing edges:");
             for edge_idx in &node.outgoing_edges {
                 let edge = &self.edges[edge_idx.idx];
                 println!("   {}", edge.borrow().get_name());
+
+                let edge_sink = edge.borrow().sink;
+                let outgoing_node = self.get_node(edge_sink);
+                match visited_nodes.get(&edge_sink) {
+                    Some(c) => {
+                        println!("   {} visited? {}", outgoing_node.get_name(), c);
+                        if !c {
+                            node_list.push_back(edge_sink);
+                        }
+                    },
+                    None => { println!("   this shouldn't happen"); }
+                }
             }
         }
 
-        nodes
+        node_sched
     }
 
-    pub fn run(&mut self) {
+    pub fn run(&mut self) -> bool {
         if self.running {
             println!("Pipeline is already running");
-            return;
+            return false
         }
 
         let schedule = self.make_schedule();
+        if schedule.is_empty() {
+            return false
+        }
+
+        println!("Schedule is: ");
+        for (idx, node_idx) in schedule.iter().enumerate() {
+            let node = self.get_node(*node_idx);
+            println!("{}: {}", idx, node.get_name());
+        }
+
+        true
     }
 }
