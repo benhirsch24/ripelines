@@ -1,11 +1,20 @@
 use std::collections::HashMap;
 use std::collections::LinkedList;
 use std::rc::{Rc};
-use std::cell::{RefCell, RefMut};
+use std::cell::{RefCell};
 
 pub struct Buffer {
-    size: usize,
-    data: Vec<u8>
+    pub size: usize,
+    pub data: Vec<u8>
+}
+
+impl Buffer {
+    pub fn new(data: Vec<u8>, size: usize) -> Buffer {
+        Buffer {
+            data: data,
+            size: size
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -34,10 +43,8 @@ impl Edge {
         &self.name
     }
 
-    pub fn push_buffer(&mut self, buffer: Buffer) -> Result<(), String> {
+    pub fn push_buffer(&mut self, buffer: Buffer) {
         self.buffers.push(buffer);
-
-        Ok(())
     }
 
     pub fn pull_buffer(&mut self) -> Result<Buffer, String> {
@@ -48,11 +55,13 @@ impl Edge {
     }
 }
 
+#[derive(Copy, Clone)]
 pub enum FilterState {
     CREATED,
     INITIALIZED,
     PAUSED,
-    PLAYING
+    PLAYING,
+    DONE
 }
 
 pub struct Element {
@@ -67,9 +76,6 @@ impl Element {
             state: FilterState::CREATED
         }
     }
-
-    pub fn iterate_edges(edges: &HashMap<String, Edge>) {
-    }
 }
 
 pub enum EdgeType {
@@ -82,8 +88,9 @@ pub trait Filter {
     fn get_mut_element(&mut self) -> &mut Element;
 
     fn set_filter_state(&mut self, state: FilterState);
+    fn get_filter_state(&self) -> FilterState;
 
-    fn run(&mut self);
+    fn run(&mut self, incoming_edges: Vec<Rc<RefCell<Edge>>>, outgoing_edges: Vec<Rc<RefCell<Edge>>>) -> bool;
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -143,6 +150,10 @@ impl Pipeline {
 
     pub fn get_node_mut(&mut self, idx: NodeIdx) -> &mut Node {
         &mut self.nodes[idx.idx]
+    }
+
+    pub fn get_edge(&self, idx: EdgeIdx) -> Rc<RefCell<Edge>> {
+        self.edges[idx.idx].clone()
     }
 
     pub fn connect(&mut self, src: NodeIdx, sink: NodeIdx) -> Result<EdgeIdx, String> {
@@ -205,7 +216,7 @@ impl Pipeline {
             let node = self.get_node(node_idx);
 
             // if each incoming edge has been visited, add this idx to the schedule
-            println!("Visiting {}", node.get_name());
+            println!("\nVisiting {}", node.get_name());
             let mut colored = true;
             for edge_idx in &node.incoming_edges {
                 let edge = &self.edges[edge_idx.idx];
@@ -220,7 +231,7 @@ impl Pipeline {
             }
 
             if colored {
-                println!("this node has been colored!!! {:?}", node_idx);
+                println!("This node has been colored!!! {:?}", node_idx);
                 node_sched.push(node_idx);
             }
 
@@ -258,10 +269,54 @@ impl Pipeline {
             return false
         }
 
-        println!("Schedule is: ");
+        println!("\nSchedule is: ");
         for (idx, node_idx) in schedule.iter().enumerate() {
             let node = self.get_node(*node_idx);
             println!("{}: {}", idx, node.get_name());
+        }
+
+        println!();
+        for node_idx in &schedule {
+            let node = self.get_node(*node_idx);
+            let filter = node.get_filter();
+            let mut filter_mut = filter.borrow_mut();
+            filter_mut.set_filter_state(FilterState::INITIALIZED);
+        }
+
+        println!();
+        let mut idx = 0;
+        loop {
+            let node_idx = schedule[idx];
+            let node = self.get_node(node_idx);
+            {
+                let filter = node.get_filter();
+                let filter_b = filter.borrow();
+                match filter_b.get_filter_state() {
+                    FilterState::DONE => break,
+                    _ => {}
+                }
+            }
+
+            let mut incoming = vec!();
+            let mut outgoing = vec!();
+            for edge_idx in &node.incoming_edges {
+                let edge = self.get_edge(*edge_idx).clone();
+                incoming.push(edge);
+            }
+            for edge_idx in &node.outgoing_edges {
+                let edge = self.get_edge(*edge_idx).clone();
+                outgoing.push(edge);
+            }
+
+            {
+                let filter = node.get_filter();
+                let mut filter_m = filter.borrow_mut();
+                if !filter_m.run(incoming, outgoing) {
+                    break
+                }
+            }
+
+            idx = (idx + 1) % schedule.len();
         }
 
         true

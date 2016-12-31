@@ -5,7 +5,7 @@ use ripelines::plugins::print::*;
 
 fn main() {
     let mut pipeline = Pipeline::new();
-    let filesrc = Filesrc::new("data/telltale.txt");
+    let filesrc = Filesrc::new("/Users/hirschb/Personal/ripelines/data/telltale.txt");
     let print = Print::new();
 
     {
@@ -23,7 +23,7 @@ fn main() {
         Err(s)  => { println!("Error adding print: {}", s); return; }
     };
 
-    let fs_print = match pipeline.connect(filesrc_idx, print_idx) {
+    match pipeline.connect(filesrc_idx, print_idx) {
         Ok(idx) => idx,
         Err(s) => { println!("Error connecting filesrc to print: {}", s); return; }
     };

@@ -1,14 +1,14 @@
 use base::*;
 use std::fs::File;
-use std::io;
 use std::io::prelude::*;
 use std::rc::Rc;
-use std::cell::{RefCell, Cell};
+use std::cell::{RefCell};
 
 const DEF_CHUNK_SIZE: usize = 1024 * 1024;
 
 pub struct Filesrc {
     base: Element,
+    state: FilterState,
 
     fd: Option<File>,
     location: String,
@@ -19,6 +19,7 @@ impl Filesrc {
     pub fn new(loc: &str) -> Rc<RefCell<Filesrc>> {
         Rc::new(RefCell::new(Filesrc {
             base: Element::new("filesrc"),
+            state: FilterState::CREATED,
             fd: None,
             location: loc.to_string(),
             chunk_size: DEF_CHUNK_SIZE
@@ -41,8 +42,13 @@ impl Filter for Filesrc {
             FilterState::INITIALIZED => {
                 let fd = File::open(&self.location);
                 match fd {
-                    Ok(f) => self.fd = Some(f),
-                    Err(e) => println!("{}", e)
+                    Ok(f) => {
+                        self.fd = Some(f);
+                        println!("Filesrc initialized!");
+                    },
+                    Err(e) => {
+                        println!("Error initializing filesrc: {}", e)
+                    }
                 }
             },
             FilterState::PAUSED => {
@@ -50,20 +56,54 @@ impl Filter for Filesrc {
             },
             FilterState::PLAYING => {
                 println!("Filesrc now playing");
+            },
+            FilterState::DONE => {
+                println!("Filesrc now done");
             }
         }
+        self.state = state;
     }
 
-    fn run(&mut self) {
-        let mut v = Vec::with_capacity(self.chunk_size);
-        let buf = &mut v;
-        let fd = match self.fd.as_mut() {
-            Some(f) => f,
-            None => { panic!("Running filesrc but WE HAVEN'T OPENED A FILE!!!"); }
+    fn get_filter_state(&self) -> FilterState {
+        self.state
+    }
+
+    fn run(&mut self, incoming_edges: Vec<Rc<RefCell<Edge>>>, outgoing_edges: Vec<Rc<RefCell<Edge>>>) -> bool {
+        assert_eq!(incoming_edges.len(), 0);
+        assert_eq!(outgoing_edges.len(), 1);
+
+        let mut v = vec![0; self.chunk_size];
+        let bytes_read_res = {
+            let buf = &mut v;
+            let fd = match self.fd.as_mut() {
+                Some(f) => f,
+                None => {
+                    println!("Trying to run filesrc when it hasn't been initialized.");
+                    self.state = FilterState::DONE;
+                    return false
+                }
+            };
+
+            fd.read(buf)
         };
 
-        fd.read_exact(buf);
+        let bytes_read = match bytes_read_res {
+            Ok(b) => b,
+            Err(e) => {
+                println!("Error reading or done: {}", e);
+                self.state = FilterState::DONE;
+                0
+            }
+        };
 
-        print!("Filesrc ran");
+        if bytes_read == 0 {
+            self.state = FilterState::DONE;
+            return false
+        }
+
+        let buffer = Buffer::new(v, bytes_read);
+        outgoing_edges[0].borrow_mut().push_buffer(buffer);
+
+        true
     }
 }
